@@ -1,7 +1,6 @@
 package me.hufman.androidautoidrive
 
-import android.support.test.InstrumentationRegistry
-import me.hufman.androidautoidrive.carapp.notifications.UnicodeCleaner
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -10,7 +9,7 @@ import org.junit.Test
 class InstrumentedTestNotificationEmoji {
 	@Before
 	fun setup() {
-		UnicodeCleaner.init(InstrumentationRegistry.getTargetContext())
+		UnicodeCleaner.init(InstrumentationRegistry.getInstrumentation().targetContext)
 	}
 
 	/** Verifies that foreign letters don't get emoji parsed */

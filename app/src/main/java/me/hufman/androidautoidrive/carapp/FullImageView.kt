@@ -5,13 +5,25 @@ import de.bmw.idrive.BMWRemoting
 import me.hufman.androidautoidrive.carapp.maps.FrameUpdater
 import me.hufman.idriveconnectionkit.rhmi.*
 
+/**
+ * Callbacks for user interactions with the fullscreen display
+ */
 interface FullImageInteraction {
 	fun navigateUp()
 	fun navigateDown()
 	fun click()
 	fun getClickState(): RHMIState
 }
-class FullImageView(val state: RHMIState, val title: String, val interaction: FullImageInteraction, val frameUpdater: FrameUpdater, val getWidth: () -> Int, val getHeight: () -> Int) {
+
+/**
+ * Settings to pass in to the fullscreen dispay
+ */
+interface FullImageConfig {
+	val invertScroll: Boolean
+	val rhmiDimensions: RHMIDimensions
+}
+
+class FullImageView(val state: RHMIState, val title: String, val config: FullImageConfig, val interaction: FullImageInteraction, val frameUpdater: FrameUpdater) {
 	companion object {
 		val TAG = "FullImageView"
 		fun fits(state: RHMIState): Boolean {
@@ -28,8 +40,8 @@ class FullImageView(val state: RHMIState, val title: String, val interaction: Fu
 	fun initWidgets() {
 		// set up the components on the map
 		state.getTextModel()?.asRaDataModel()?.value = title
-		state.setProperty(24, 3)
-		state.setProperty(26, "1,0,7")
+		state.setProperty(RHMIProperty.PropertyId.HMISTATE_TABLETYPE, 3)
+		state.setProperty(RHMIProperty.PropertyId.HMISTATE_TABLELAYOUT, "1,0,7")
 		state.componentsList.forEach {
 			it.setVisible(false)
 		}
@@ -37,9 +49,9 @@ class FullImageView(val state: RHMIState, val title: String, val interaction: Fu
 		state.focusCallback = FocusCallback { focused ->
 			if (focused) {
 				Log.i(TAG, "Showing map on full screen")
-				imageComponent.setProperty(9, getWidth())
-				imageComponent.setProperty(10, getHeight())
-				frameUpdater.showWindow(getWidth(), getHeight(), imageModel)
+				imageComponent.setProperty(RHMIProperty.PropertyId.WIDTH.id, config.rhmiDimensions.visibleWidth)
+				imageComponent.setProperty(RHMIProperty.PropertyId.HEIGHT.id, config.rhmiDimensions.visibleHeight)
+				frameUpdater.showWindow(config.rhmiDimensions.visibleWidth, config.rhmiDimensions.visibleHeight, imageModel)
 			} else {
 				Log.i(TAG, "Hiding map on full screen")
 				frameUpdater.hideWindow(imageModel)
@@ -54,13 +66,22 @@ class FullImageView(val state: RHMIState, val title: String, val interaction: Fu
 		state.app.events.values.filterIsInstance<RHMIEvent.FocusEvent>().first().triggerEvent(mapOf(0 to inputList.id, 41 to 3))
 
 		inputList.getSelectAction()?.asRAAction()?.rhmiActionCallback = RHMIActionListCallback { listIndex ->
-			if (listIndex in 0..2) {   // each wheel click through the list will trigger another step of 1
-				interaction.navigateUp()
+			// decide which way to scroll
+			val directionUp = when (listIndex) {   // each wheel click through the list will trigger another step of 1
+				in 0..2 -> true
+				in 4..6 -> false
+				else -> null        // somehow scrolled to the middle of the list?
+			}?.let {
+				it xor config.invertScroll  // invert if the user requested inversion
 			}
-			if (listIndex in 4..6) {
+			// effect the navigation
+			if (directionUp == true) {
+				interaction.navigateUp()
+			} else if (directionUp == false) {
 				interaction.navigateDown()
 			}
-			state.app.events.values.filterIsInstance<RHMIEvent.FocusEvent>().first().triggerEvent(mapOf(0 to inputList.id, 41 to 3))  // set focus to the middle of the list
+			// reset focus to the middle of the list
+			state.app.events.values.filterIsInstance<RHMIEvent.FocusEvent>().first().triggerEvent(mapOf(0 to inputList.id, 41 to 3))
 		}
 		inputList.getAction()?.asRAAction()?.rhmiActionCallback = object: RHMIActionButtonCallback {
 			override fun onAction(invokedBy: Int?) {
@@ -83,14 +104,14 @@ class FullImageView(val state: RHMIState, val title: String, val interaction: Fu
 			}
 		}
 		inputList.setVisible(true)
-		inputList.setProperty(20, 50000)  // positionX, so that we don't see it but should still be interacting with it
-		inputList.setProperty(21, 50000)  // positionY, so that we don't see it but should still be interacting with it
-		inputList.setProperty(22, true)
+		inputList.setProperty(RHMIProperty.PropertyId.POSITION_X.id, -50000)  // positionX, so that we don't see it but should still be interacting with it
+		inputList.setProperty(RHMIProperty.PropertyId.POSITION_Y.id, 0)  // positionY, so that we don't see it but should still be interacting with it
+		inputList.setProperty(RHMIProperty.PropertyId.BOOKMARKABLE, true)
 
 		imageComponent.setVisible(true)
-		imageComponent.setProperty(20, -16)    // positionX
-		imageComponent.setProperty(21, 0)    // positionY
-		imageComponent.setProperty(9, getWidth())
-		imageComponent.setProperty(10, getHeight())
+		imageComponent.setProperty(RHMIProperty.PropertyId.POSITION_X.id, -config.rhmiDimensions.paddingLeft)    // positionX
+		imageComponent.setProperty(RHMIProperty.PropertyId.POSITION_Y.id, -config.rhmiDimensions.paddingTop)    // positionY
+		imageComponent.setProperty(RHMIProperty.PropertyId.WIDTH.id, config.rhmiDimensions.visibleWidth)
+		imageComponent.setProperty(RHMIProperty.PropertyId.HEIGHT.id, config.rhmiDimensions.visibleHeight)
 	}
 }

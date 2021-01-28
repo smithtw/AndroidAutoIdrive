@@ -6,15 +6,14 @@ import android.graphics.Color
 import android.media.ImageReader
 import android.os.Bundle
 import android.os.Looper
-import android.support.test.InstrumentationRegistry
-import android.support.test.runner.AndroidJUnit4
 import android.view.Display
 import android.view.WindowManager
 import android.widget.ImageView
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.nhaarman.mockito_kotlin.any
 import com.nhaarman.mockito_kotlin.mock
 import com.nhaarman.mockito_kotlin.verify
-import me.hufman.androidautoidrive.MapService.Companion.createVirtualDisplay
 import me.hufman.androidautoidrive.carapp.maps.VirtualDisplayScreenCapture
 import org.awaitility.Awaitility.await
 
@@ -30,16 +29,17 @@ class InstrumentedTestVirtualDisplay {
 	fun testLifecycle() {
 		/** Test that the VirtualDisplay can get created and destroyed */
 		// Context of the app under test.
-		val appContext = InstrumentationRegistry.getTargetContext()
+		val appContext = InstrumentationRegistry.getInstrumentation().targetContext
 		Looper.prepare()
-		val testCapture = VirtualDisplayScreenCapture.build()
-		val virtualDisplay = createVirtualDisplay(appContext, testCapture.imageCapture)
+		val testCapture = VirtualDisplayScreenCapture.build(1000, 400)
+		val virtualDisplay = VirtualDisplayScreenCapture.createVirtualDisplay(appContext, testCapture.imageCapture)
 		val projection = MockProjection(appContext, virtualDisplay.display)
 		testCapture.registerImageListener(frameListener)
 		projection.show()
 
 		await().untilAsserted {
 			verify(frameListener).onImageAvailable(any())
+			projection.changeColor()
 		}
 
 		testCapture.onDestroy()
@@ -60,7 +60,7 @@ class MockProjection(parentContext: Context, display: Display): Presentation(par
 		colors.add(Color.BLUE)
 		colors.add(Color.RED)
 
-		window.setType(WindowManager.LayoutParams.TYPE_PRIVATE_PRESENTATION)
+		window?.setType(WindowManager.LayoutParams.TYPE_PRIVATE_PRESENTATION)
 
 		view.setBackgroundColor(colors[colorIndex])
 		setContentView(view)

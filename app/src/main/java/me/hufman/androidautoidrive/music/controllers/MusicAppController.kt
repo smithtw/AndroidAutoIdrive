@@ -1,6 +1,5 @@
 package me.hufman.androidautoidrive.music.controllers
 
-import android.os.DeadObjectException
 import me.hufman.androidautoidrive.Observable
 import me.hufman.androidautoidrive.music.*
 
@@ -27,8 +26,12 @@ interface MusicAppController {
 
 	fun customAction(action: CustomAction)
 
+	fun toggleShuffle()
+
+	fun toggleRepeat()
+
 	/* Current state */
-	fun getQueue(): List<MusicMetadata>
+	fun getQueue(): QueueMetadata?
 
 	fun getMetadata(): MusicMetadata?
 
@@ -37,6 +40,10 @@ interface MusicAppController {
 	fun isSupportedAction(action: MusicAction): Boolean
 
 	fun getCustomActions(): List<CustomAction>
+
+	fun isShuffling(): Boolean
+
+	fun getRepeatMode(): RepeatMode
 
 	suspend fun browse(directory: MusicMetadata?): List<MusicMetadata>
 

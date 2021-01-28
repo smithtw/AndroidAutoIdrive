@@ -1,6 +1,9 @@
 package me.hufman.androidautoidrive.carapp.maps
 
+import android.content.Context
 import android.graphics.*
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
 import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
@@ -10,15 +13,25 @@ import java.io.ByteArrayOutputStream
 
 /**
  * Generates images from an ImageReader, handily resized and compressed to JPG
+ * VirtualDisplayScreenCapture.createVirtualDisplay can take this imageCapture and render to it
  */
 class VirtualDisplayScreenCapture(val imageCapture: ImageReader, val bitmapConfig: Bitmap.Config, val compressFormat: Bitmap.CompressFormat, var compressQuality: Int = 65) {
 	companion object {
-		fun build(): VirtualDisplayScreenCapture {
+		fun build(width: Int, height: Int): VirtualDisplayScreenCapture {
 			return VirtualDisplayScreenCapture(
-					ImageReader.newInstance(MapApp.MAX_WIDTH, MapApp.MAX_HEIGHT, PixelFormat.RGBA_8888, 2)!!,
+					ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)!!,
 					Bitmap.Config.ARGB_8888,
 					Bitmap.CompressFormat.JPEG)
 		}
+
+		fun createVirtualDisplay(context: Context, imageCapture: ImageReader, dpi:Int = 100, name: String = "IDriveVirtualDisplay"): VirtualDisplay {
+			val displayManager = context.getSystemService(DisplayManager::class.java)
+			return displayManager.createVirtualDisplay(name,
+					imageCapture.width, imageCapture.height, dpi,
+					imageCapture.surface, DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
+					null, Handler(Looper.getMainLooper()))
+		}
+
 	}
 
 	/** Prepares an ImageReader, and sends JPG-compressed images to a callback */

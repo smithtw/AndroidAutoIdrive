@@ -1,11 +1,15 @@
 package me.hufman.androidautoidrive.carapp.music
 
+import de.bmw.idrive.BMWRemoting
+import me.hufman.androidautoidrive.UnicodeCleaner
 import me.hufman.androidautoidrive.carapp.RHMIListAdapter
 import me.hufman.androidautoidrive.music.MusicAction
 import me.hufman.androidautoidrive.music.MusicAppInfo
 import me.hufman.androidautoidrive.music.MusicController
 import me.hufman.androidautoidrive.music.MusicMetadata
 import me.hufman.idriveconnectionkit.rhmi.*
+import kotlin.math.max
+import kotlin.math.min
 
 class GlobalMetadata(app: RHMIApplication, var controller: MusicController) {
 	val multimediaInfoEvent: RHMIEvent.MultimediaInfoEvent
@@ -26,14 +30,23 @@ class GlobalMetadata(app: RHMIApplication, var controller: MusicController) {
 	companion object {
 		val QUEUE_SKIPPREVIOUS = MusicMetadata(mediaId = "__QUEUE_SKIPBACK__", title="< ${L.MUSIC_SKIP_PREVIOUS}")
 		val QUEUE_SKIPNEXT = MusicMetadata(mediaId = "__QUEUE_SKIPNEXT__", title="${L.MUSIC_SKIP_NEXT} >")
+
+		const val QUEUE_BACK_COUNT = 15 // how far back to allow scrolling
+		const val QUEUE_NEXT_COUNT = 25 // how far forward to allow scrolling
 	}
 
 	fun initWidgets() {
 		instrumentCluster.getSetTrackAction()?.asRAAction()?.rhmiActionCallback = RHMIActionListCallback { onClick(it) }
 	}
 
+	fun forgetDisplayedInfo() {
+		displayedApp = null
+		displayedSong = null
+		displayedQueue = null
+	}
+
 	fun redraw() {
-		val app = if (!controller.getPlaybackPosition().playbackPaused) controller.currentAppInfo else null
+		val app = controller.currentAppInfo
 		if (app != null && app != displayedApp) {
 			showApp(app)
 		}
@@ -43,7 +56,7 @@ class GlobalMetadata(app: RHMIApplication, var controller: MusicController) {
 			showSong(song)
 		}
 
-		val queue = controller.getQueue()
+		val queue = controller.getQueue()?.songs
 		if (queue != displayedQueue || song != displayedSong) {
 			val icQueue = prepareQueue(queue, song)
 			showQueue(icQueue, song)
@@ -63,13 +76,13 @@ class GlobalMetadata(app: RHMIApplication, var controller: MusicController) {
 
 	private fun showSong(song: MusicMetadata) {
 		// show in the sidebar
-		val trackModel = multimediaInfoEvent.getTextModel1()?.asRaDataModel()
-		val artistModel = multimediaInfoEvent.getTextModel2()?.asRaDataModel()
-		trackModel?.value = song.title ?: ""
-		artistModel?.value = song.artist ?: ""
+		val artistModel = multimediaInfoEvent.getTextModel1()?.asRaDataModel()
+		val trackModel = multimediaInfoEvent.getTextModel2()?.asRaDataModel()
+		artistModel?.value = UnicodeCleaner.clean(song.artist ?: "")
+		trackModel?.value = UnicodeCleaner.clean(song.title ?: "")
 
 		// show in the IC
-		instrumentCluster.getTextModel()?.asRaDataModel()?.value = song.title ?: ""
+		instrumentCluster.getTextModel()?.asRaDataModel()?.value = UnicodeCleaner.clean(song.title ?: "")
 
 		// actually tell the car to load the data
 		multimediaInfoEvent.triggerEvent()
@@ -80,42 +93,36 @@ class GlobalMetadata(app: RHMIApplication, var controller: MusicController) {
 	 */
 	fun prepareQueue(songQueue: List<MusicMetadata>?, currentSong: MusicMetadata?): List<MusicMetadata> {
 		val queue = ArrayList<MusicMetadata>(songQueue?.size ?: 0 + 3)
+		val index = songQueue?.indexOfFirst { it.queueId == currentSong?.queueId } ?: -1
 		fun addPrevious(): Unit = if (controller.isSupportedAction(MusicAction.SKIP_TO_PREVIOUS)) { queue.add(QUEUE_SKIPPREVIOUS); Unit } else Unit
 		fun addNext(): Unit = if (controller.isSupportedAction(MusicAction.SKIP_TO_NEXT)) { queue.add(QUEUE_SKIPNEXT); Unit } else Unit
-		if (songQueue == null || songQueue.isEmpty()) {
+		if (songQueue != null && currentSong != null && index >= 0) {
+			// add the previous/next actions around the current song
+			// This allows for using the shuffle mode's back/next and also the queue selection
+			queue.addAll(songQueue.subList(max(0, index - QUEUE_BACK_COUNT), index))
+			addPrevious()
+			queue.add(currentSong)
+			addNext()
+			if (index < songQueue.count()) {
+				queue.addAll(songQueue.subList(index + 1, min(songQueue.count(), index + QUEUE_NEXT_COUNT)))
+			}
+		} else {
 			addPrevious()
 			if (currentSong != null) { queue.add(currentSong) }
 			addNext()
-		} else {
-			val index = songQueue.indexOfFirst { it.queueId == currentSong?.queueId }
-			if (index >= 0) {
-				// add the previous/next actions around the current song
-				// This allows for using the shuffle mode's back/next and also the queue selection
-				queue.addAll(songQueue.subList(0, index))
-				addPrevious()
-				queue.add(songQueue[index])
-				addNext()
-				if (index < songQueue.count()) {
-					queue.addAll(songQueue.subList(index + 1, songQueue.count()))
-				}
-			} else {
-				queue.addAll(songQueue)
-			}
 		}
 		return queue
 	}
 
 	private fun showQueue(queue: List<MusicMetadata>, currentSong: MusicMetadata?) {
-		instrumentCluster.getUseCaseModel()?.asRaDataModel()?.value = "EntICPlaylist"
-
 		val adapter = object: RHMIListAdapter<MusicMetadata>(7, queue) {
 			override fun convertRow(index: Int, item: MusicMetadata): Array<Any> {
 				val selected = item.queueId == currentSong?.queueId
 				return arrayOf(
 						index,  // index
-						item.title ?: "",   // title
-						item.artist ?: "",  // artist
-						item.album ?: "",   // album
+						UnicodeCleaner.clean(item.title ?: ""),   // title
+						UnicodeCleaner.clean(item.artist ?: ""),  // artist
+						UnicodeCleaner.clean(item.album ?: ""),   // album
 						-1,
 						if (selected) 1 else 0, // checked
 						true
@@ -123,7 +130,12 @@ class GlobalMetadata(app: RHMIApplication, var controller: MusicController) {
 			}
 		}
 
-		instrumentCluster.getPlaylistModel()?.asRaListModel()?.setValue(adapter, 0, adapter.height, adapter.height)
+		try {
+			instrumentCluster.getUseCaseModel()?.asRaDataModel()?.value = "EntICPlaylist"
+			instrumentCluster.getPlaylistModel()?.asRaListModel()?.setValue(adapter, 0, adapter.height, adapter.height)
+		} catch (e: BMWRemoting.ServiceException) {
+			// This playlist model call has been observed to crash, for some reason
+		}
 	}
 
 	private fun onClick(index: Int) {

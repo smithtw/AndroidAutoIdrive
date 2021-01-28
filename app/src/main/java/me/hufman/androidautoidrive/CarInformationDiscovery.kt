@@ -2,22 +2,23 @@ package me.hufman.androidautoidrive
 
 import de.bmw.idrive.BMWRemotingServer
 import de.bmw.idrive.BaseBMWRemotingClient
+import me.hufman.androidautoidrive.carapp.*
 import me.hufman.idriveconnectionkit.IDriveConnection
 import me.hufman.idriveconnectionkit.android.CarAppResources
-import me.hufman.idriveconnectionkit.android.IDriveConnectionListener
+import me.hufman.idriveconnectionkit.android.IDriveConnectionStatus
 import me.hufman.idriveconnectionkit.android.security.SecurityAccess
 import java.lang.Exception
 
-class CarInformationDiscovery(securityAccess: SecurityAccess, carAppAssets: CarAppResources, val listener: CarInformationDiscoveryListener?) {
-
-	val carappListener = CarAppListener()
+class CarInformationDiscovery(iDriveConnectionStatus: IDriveConnectionStatus, securityAccess: SecurityAccess, carAppAssets: CarAppResources, val listener: CarInformationDiscoveryListener) {
+	val carappListener: CarAppListener
 	val carConnection: BMWRemotingServer
 	var capabilities: Map<String, String?>? = null
 
 	init {
-		carConnection = IDriveConnection.getEtchConnection(IDriveConnectionListener.host
-				?: "127.0.0.1", IDriveConnectionListener.port ?: 8003, carappListener)
-		val appCert = carAppAssets.getAppCertificate(IDriveConnectionListener.brand
+		carappListener = CarAppListener(listener)
+		carConnection = IDriveConnection.getEtchConnection(iDriveConnectionStatus.host
+				?: "127.0.0.1", iDriveConnectionStatus.port ?: 8003, carappListener)
+		val appCert = carAppAssets.getAppCertificate(iDriveConnectionStatus.brand
 				?: "")?.readBytes() as ByteArray
 		val sas_challenge = carConnection.sas_certificate(appCert)
 		val sas_login = securityAccess.signChallenge(challenge = sas_challenge)
@@ -26,8 +27,7 @@ class CarInformationDiscovery(securityAccess: SecurityAccess, carAppAssets: CarA
 
 	fun onCreate() {
 		getCapabilities()
-
-		onDestroy()
+		listener.onCdsConnection(CDSConnectionEtch(carConnection))
 	}
 
 	private fun getCapabilities() {
@@ -39,7 +39,7 @@ class CarInformationDiscovery(securityAccess: SecurityAccess, carAppAssets: CarA
 				.mapValues { it.value?.toString() }
 		this.capabilities = stringCapabilities
 		try {
-			listener?.onCapabilities(stringCapabilities)
+			listener.onCapabilities(stringCapabilities)
 		} catch (e: Exception) {
 		}
 
@@ -56,19 +56,20 @@ class CarInformationDiscovery(securityAccess: SecurityAccess, carAppAssets: CarA
 		Analytics.reportCarCapabilities(reportedCapabilities)
 	}
 
-	inner class CarAppListener: BaseBMWRemotingClient() {
+	class CarAppListener(val cdsEventHandler: CDSEventHandler): BaseBMWRemotingClient() {
 		override fun cds_onPropertyChangedEvent(handle: Int?, ident: String?, propertyName: String?, propertyValue: String?) {
-			super.cds_onPropertyChangedEvent(handle, ident, propertyName, propertyValue)
+			cdsEventHandler.onPropertyChangedEvent(ident, propertyValue)
 		}
 	}
 
 	fun onDestroy() {
 		try {
 			IDriveConnection.disconnectEtchConnection(carConnection)
-		} catch (e: java.lang.Exception) {}
+		} catch (e: Exception) {}
 	}
 }
 
-interface CarInformationDiscoveryListener {
+interface CarInformationDiscoveryListener: CDSEventHandler {
 	fun onCapabilities(capabilities: Map<String, String?>)
+	fun onCdsConnection(connection: CDSConnection)
 }

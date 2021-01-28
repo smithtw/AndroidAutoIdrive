@@ -7,6 +7,7 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.android.asCoroutineDispatcher
 import me.hufman.androidautoidrive.AppSettings
+import me.hufman.androidautoidrive.MutableAppSettingsReceiver
 import me.hufman.androidautoidrive.music.controllers.CombinedMusicAppController
 import me.hufman.androidautoidrive.music.controllers.MusicAppController
 import me.hufman.androidautoidrive.music.controllers.SpotifyAppController
@@ -25,16 +26,11 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 	companion object {
 		private const val TAG = "MusicController"
 
-		// how many milliseconds per half-second interval to seek, at each button-hold time threshold
-		private val SEEK_THRESHOLDS = listOf(
-				0 to 4000,
-				2000 to 7000,
-				5000 to 13000,
-				8000 to 30000
-		)
-
 		// how often to reconnect to an app if it returns NULL metadata
 		private const val RECONNECT_TIMEOUT = 1000
+
+		// disable autoswitch for a time after the user picks an app manually
+		private const val DISABLE_AUTOSWITCH_TIMEOUT = 5000
 	}
 
 	val musicSessions = MusicSessions(context)
@@ -44,7 +40,9 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 			musicSessions.Connector(context)
 	)
 	val connector = CombinedMusicAppController.Connector(connectors)
+	val appSettings = MutableAppSettingsReceiver(context, handler)
 
+	var disableAutoswitchUntil = 0L
 	var lastConnectTime = 0L
 	var currentAppInfo: MusicAppInfo? = null
 	var currentAppController: MusicAppController? = null
@@ -54,26 +52,7 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 	var triggeredPlayback = false   // whether we have triggered playback on a fresh connection
 
 	// handles manual rewinding/fastforwarding
-	private var startedSeekingTime: Long = 0    // determine how long the user has been holding the seek button
-	private var seekingDirectionForward = true
-	private val seekingRunnable = object : Runnable {
-		override fun run() {
-			if (startedSeekingTime > 0) {
-				val holdTime = System.currentTimeMillis() - startedSeekingTime
-				val seekTime = SEEK_THRESHOLDS.lastOrNull { holdTime >= it.first }?.second ?: 2000
-				val curPos = getPlaybackPosition().getPosition()
-				val newPos = curPos + if (seekingDirectionForward) { 1 } else { -1 } * seekTime
-				// handle seeking past beginning of song
-				if (newPos < 0) {
-					skipToPrevious()
-					startedSeekingTime = 0  // cancel seeking, because skipToPrevious starts at the beginning of the previous song
-				} else {
-					seekTo(newPos)
-					handler.postDelayed(this, 300)
-				}
-			}
-		}
-	}
+	val seekingController = SeekingController(context, handler, this)
 
 
 	init {
@@ -123,7 +102,18 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 		}
 	}
 
-	fun connectApp(app: MusicAppInfo) {
+	fun connectAppManually(app: MusicAppInfo) {
+		disableAutoswitchUntil = System.currentTimeMillis() + DISABLE_AUTOSWITCH_TIMEOUT
+		connectApp(app)
+	}
+
+	fun connectAppAutomatically(app: MusicAppInfo) {
+		if (System.currentTimeMillis() > disableAutoswitchUntil) {
+			connectApp(app)
+		}
+	}
+
+	private fun connectApp(app: MusicAppInfo) {
 		val previousAppInfo = currentAppInfo
 		currentAppInfo = app
 		asyncRpc {
@@ -154,12 +144,12 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 
 	/** Remember this app as the last one to play */
 	fun saveDesiredApp(app: MusicAppInfo) {
-		AppSettings.saveSetting(context, AppSettings.KEYS.AUDIO_DESIRED_APP, app.packageName)
+		appSettings[AppSettings.KEYS.AUDIO_DESIRED_APP] = app.packageName
 	}
 
 	/** Return the packageName of the last app to play */
 	fun loadDesiredApp(): String {
-		return AppSettings[AppSettings.KEYS.AUDIO_DESIRED_APP]
+		return appSettings[AppSettings.KEYS.AUDIO_DESIRED_APP]
 	}
 
 	fun isConnected(): Boolean {
@@ -182,7 +172,10 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 	fun play() {
 		desiredPlayback = true
 		asyncControl { controller ->
-			controller.play()
+			// some apps interrupt the audio when already playing during play()
+			if (getPlaybackPosition().isPaused) {
+				controller.play()
+			}
 		}
 	}
 	fun playFromSearch(search: String) = asyncControl { controller ->
@@ -195,6 +188,13 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 	fun pauseSync() = withController { controller -> // all calls are already in the handler thread, don't go async
 		controller.pause()
 	}
+	fun togglePlay() {
+		if (getPlaybackPosition().isPaused) {
+			play()
+		} else {
+			pause()
+		}
+	}
 	fun skipToPrevious() = asyncControl { controller ->
 		controller.skipToPrevious()
 	}
@@ -202,18 +202,13 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 		controller.skipToNext()
 	}
 	fun startRewind() {
-		startedSeekingTime = System.currentTimeMillis()
-		seekingDirectionForward = false
-		seekingRunnable.run()
+		seekingController.startRewind()
 	}
 	fun startFastForward() {
-		startedSeekingTime = System.currentTimeMillis()
-		seekingDirectionForward = true
-		seekingRunnable.run()
+		seekingController.startFastForward()
 	}
 	fun stopSeeking() {
-		startedSeekingTime = 0
-		play()
+		seekingController.stopSeeking()
 	}
 	fun seekTo(newPos: Long) = asyncControl { controller ->
 		controller.seekTo(newPos)
@@ -228,7 +223,31 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 	}
 
 	fun customAction(action: CustomAction) = asyncControl { controller ->
-		controller.customAction(action)
+		if (seekingController.seekingActions.contains(action)) {
+			seekingController.seekAction(action)
+		} else {
+			controller.customAction(action)
+		}
+	}
+
+	fun toggleShuffle() = asyncControl { controller ->
+		controller.toggleShuffle()
+	}
+
+	fun isShuffling(): Boolean {
+		return withController { controller ->
+			return controller.isShuffling()
+		} ?: false
+	}
+
+	fun toggleRepeat() = asyncControl { controller ->
+		controller.toggleRepeat()
+	}
+
+	fun getRepeatMode(): RepeatMode {
+		return withController { controller ->
+			return controller.getRepeatMode()
+		} ?: RepeatMode.OFF
 	}
 
 	fun browseAsync(directory: MusicMetadata?): Deferred<List<MusicMetadata>> {
@@ -255,7 +274,7 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 
 	/* Current state */
 	/** Gets the current queue */
-	fun getQueue(): List<MusicMetadata>? {
+	fun getQueue(): QueueMetadata? {
 		return withController { controller ->
 			return controller.getQueue()
 		}
@@ -270,13 +289,20 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 	fun getPlaybackPosition(): PlaybackPosition {
 		return withController { controller ->
 			controller.getPlaybackPosition()
-		} ?: PlaybackPosition(true, 0, 0, 0)
+		} ?: PlaybackPosition(true, false, 0, 0, 0)
 	}
 
 	fun getCustomActions(): List<CustomAction> {
-		return withController { controller ->
+		val appActions = withController { controller ->
 			controller.getCustomActions()
-		}  ?: LinkedList()
+		} ?: LinkedList()
+		return if (((getMetadata()?.duration ?: -1) > 0) || isSupportedAction(MusicAction.SEEK_TO)) {
+			// Rocket Player claims to not support SEEK_TO
+			// Spotify's duration sometimes goes missing
+			appActions + seekingController.seekingActions
+		} else {
+			appActions
+		}
 	}
 
 	fun isSupportedAction(action: MusicAction): Boolean {
@@ -299,7 +325,7 @@ class MusicController(val context: Context, val handler: Handler): CoroutineScop
 	}
 	fun scheduleRedrawProgress() {
 		val position = getPlaybackPosition()
-		if (position.playbackPaused) {
+		if (position.isPaused) {
 			handler.postDelayed(redrawProgressTask, 500)
 		} else {
 			// the time until the next second interval

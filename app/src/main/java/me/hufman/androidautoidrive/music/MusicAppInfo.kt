@@ -2,16 +2,34 @@ package me.hufman.androidautoidrive.music
 
 import android.content.Context
 import android.graphics.drawable.Drawable
+import me.hufman.androidautoidrive.carapp.AMAppInfo
+import me.hufman.androidautoidrive.carapp.AMAppInfo.Companion.getAppWeight
+import me.hufman.androidautoidrive.carapp.AMCategory
+import java.util.*
 
-data class MusicAppInfo(val name: String, val icon: Drawable,
-                        val packageName: String, val className: String?) {
+data class MusicAppInfo(override val name: String, override val icon: Drawable,
+                        override val packageName: String, val className: String?): AMAppInfo {
 	var probed = false
+	var hidden = false          // whether to show this app in the car, applied by MusicAppDiscovery settings
 	var connectable = false     // whether MediaBrowser can connect
 	var controllable = false    // whether MediaSession can control it
 	var browseable = false      // whether any media items were discovered
 	var searchable = false      // whether any search results came back
 	var playsearchable = false  // whether the controller indicated PlayFromSearch support
 
+	// AM App List display controls
+	var forcedCategory: AMCategory? = null
+
+	override val category: AMCategory
+		get() = this.forcedCategory ?: guessCategory(packageName, name)
+
+	var weightAdjustment = 0
+	override val weight: Int
+		get() {
+			return 800 - (getAppWeight(this.name) - weightAdjustment)
+		}
+
+	// general helpers
 	companion object {
 		fun getInstance(context: Context, packageName: String, className: String?): MusicAppInfo {
 			val packageManager = context.packageManager
@@ -20,6 +38,37 @@ data class MusicAppInfo(val name: String, val icon: Drawable,
 			val name = packageManager.getApplicationLabel(appInfo).toString()
 			val icon = packageManager.getApplicationIcon(appInfo)
 			return MusicAppInfo(name, icon, packageName, className)
+		}
+
+		fun guessCategory(packageName: String, label: String): AMCategory {
+			val lowLabel = label.toLowerCase(Locale.getDefault())
+
+			// any names which are Media, even though they look like radio
+			val MEDIA_NAMES = setOf("librofm")
+			if (MEDIA_NAMES.any { packageName.contains(it) || lowLabel.contains(it) }) {
+				return AMCategory.MULTIMEDIA
+			}
+
+			// any names which are Radio
+			val RADIO_NAMES = setOf(
+					"cast", "fm", "news", "radio", "live", "show",  // general keywords
+					"sirius", "tunein",     // the big ones
+					"ard", "audials", "audioaddict", "mnn", "nhl", "ntv", "rtl",   // some manual package names
+					"it.mediaset", "it.froggy",                         // Froggy Media
+					"com.global.", "com.thisisglobal.", "com.thisisaim."    // Global Media
+			)
+			if (RADIO_NAMES.any { packageName.contains(it) || lowLabel.contains(it) }) {
+				return AMCategory.RADIO
+			}
+			val RADIO_PATTERNS = setOf(
+					Regex("(8|9|10)[0-9]")
+			)
+			if (RADIO_PATTERNS.any { packageName.contains(it) || lowLabel.contains(it) }) {
+				return AMCategory.RADIO
+			}
+
+			// everything else is Media
+			return AMCategory.MULTIMEDIA
 		}
 	}
 
@@ -55,14 +104,19 @@ data class MusicAppInfo(val name: String, val icon: Drawable,
 		)
 	}
 
-	fun clone(): MusicAppInfo {
+	fun clone(probed: Boolean? = null, hidden: Boolean? = null, connectable: Boolean? = null, controllable: Boolean? = null,
+	          browseable: Boolean? = null, searchable: Boolean? = null, playsearchable: Boolean? = null,
+	          forcedCategory: AMCategory? = null, weightAdjustment: Int? = null): MusicAppInfo {
 		return MusicAppInfo(name, icon, packageName, className).also {
-			it.probed = this.probed
-			it.connectable = this.connectable
-			it.controllable = this.controllable
-			it.browseable = this.browseable
-			it.searchable = this.searchable
-			it.playsearchable = this.playsearchable
+			it.probed = probed ?: this.probed
+			it.hidden = hidden ?: this.hidden
+			it.connectable = connectable ?: this.connectable
+			it.controllable = controllable ?: this.controllable
+			it.browseable = browseable ?: this.browseable
+			it.searchable = searchable ?: this.searchable
+			it.playsearchable = playsearchable ?: this.playsearchable
+			it.forcedCategory = forcedCategory ?: this.forcedCategory
+			it.weightAdjustment = weightAdjustment ?: this.weightAdjustment
 		}
 	}
 

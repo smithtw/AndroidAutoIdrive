@@ -77,7 +77,8 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 	 */
 	fun getQueueController(): MusicAppController? {
 		return withController {
-			if (it.getQueue().isEmpty()) {
+			val queue = it.getQueue()
+			if (queue?.songs?.isNotEmpty() != true) {
 				throw UnsupportedOperationException()
 			}
 			it
@@ -183,8 +184,8 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 		}
 	}
 
-	override fun getQueue(): List<MusicMetadata> {
-		return getQueueController()?.getQueue() ?: LinkedList()
+	override fun getQueue(): QueueMetadata? {
+		return getQueueController()?.getQueue()
 	}
 
 	override fun getMetadata(): MusicMetadata? {
@@ -194,8 +195,10 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 		// the first working controller may not have a queue, so
 		// update the queueId to be used by the queue controller
 		val queueController = getQueueController()
-		if (queueController != null) {
-			metadata = metadata?.copy(queueId = queueController.getMetadata()?.queueId)
+		if (queueController != null && metadata != null) {
+			metadata = MusicMetadata(mediaId = metadata.mediaId, queueId = queueController.getMetadata()?.queueId, playable = metadata.playable, browseable = metadata.browseable,
+					duration = metadata.duration, coverArt = metadata.coverArt, coverArtUri = metadata.coverArtUri, icon = metadata.icon, artist = metadata.artist, album = metadata.album,
+					title = metadata.title, subtitle = metadata.subtitle, trackCount = metadata.trackCount, trackNumber = metadata.trackNumber)
 		}
 		return metadata
 	}
@@ -203,7 +206,7 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 	override fun getPlaybackPosition(): PlaybackPosition {
 		return withController {
 			it.getPlaybackPosition()
-		} ?: PlaybackPosition(true, 0, 0, 0)
+		} ?: PlaybackPosition(true, false, 0, 0, 0)
 	}
 
 	override fun isSupportedAction(action: MusicAction): Boolean {
@@ -231,6 +234,42 @@ class CombinedMusicAppController(val controllers: List<Observable<out MusicAppCo
 			}
 		}
 		return actions
+	}
+
+	override fun toggleShuffle() {
+		withController {
+			if (!it.isSupportedAction(MusicAction.SET_SHUFFLE_MODE)) {
+				throw UnsupportedOperationException()
+			}
+			it.toggleShuffle()
+		}
+	}
+
+	override fun isShuffling(): Boolean {
+		return withController {
+			if (!it.isSupportedAction(MusicAction.SET_SHUFFLE_MODE)) {
+				throw UnsupportedOperationException()
+			}
+			it.isShuffling()
+		} ?: false
+	}
+
+	override fun toggleRepeat() {
+		withController {
+			if (!it.isSupportedAction(MusicAction.SET_REPEAT_MODE)) {
+				throw UnsupportedOperationException()
+			}
+			it.toggleRepeat()
+		}
+	}
+
+	override fun getRepeatMode(): RepeatMode {
+		return withController {
+			if (!it.isSupportedAction(MusicAction.SET_REPEAT_MODE)) {
+				throw UnsupportedOperationException()
+			}
+			it.getRepeatMode()
+		} ?: RepeatMode.OFF
 	}
 
 	private suspend fun waitforConnect() {

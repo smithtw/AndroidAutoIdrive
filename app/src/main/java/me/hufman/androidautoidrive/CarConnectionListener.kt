@@ -3,9 +3,9 @@ package me.hufman.androidautoidrive
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.util.Log
-import me.hufman.androidautoidrive.phoneui.MainActivity
-import me.hufman.idriveconnectionkit.android.IDriveConnectionListener
+import me.hufman.idriveconnectionkit.android.IDriveConnectionReceiver
 
 /**
  * Starts the MainService when the car announces a connection
@@ -21,15 +21,21 @@ class CarConnectionListener: BroadcastReceiver() {
 		// car changed connection status
 		Log.i(TAG, "Received car status announcement: ${intent.action}")
 
-		if (intent.action == IDriveConnectionListener.INTENT_ATTACHED ||
+		if (intent.action == IDriveConnectionReceiver.INTENT_ATTACHED ||
 				intent.action == "me.hufman.androidautoidrive.CarConnectionListener_START") {
 			context.startService(Intent(context, MainService::class.java).setAction(MainService.ACTION_START))
 		}
-		if (intent.action == IDriveConnectionListener.INTENT_DETACHED ||
+		if (intent.action == IDriveConnectionReceiver.INTENT_DETACHED ||
 				intent.action == "me.hufman.androidautoidrive.CarConnectionListener_STOP") {
 			context.stopService(Intent(context, MainService::class.java).setAction(MainService.ACTION_STOP))
 		}
+	}
 
-		context.sendBroadcast(Intent(MainActivity.INTENT_REDRAW))
+	fun register(context: Context) {
+		context.registerReceiver(this, IntentFilter(IDriveConnectionReceiver.INTENT_ATTACHED))
+		context.registerReceiver(this, IntentFilter(IDriveConnectionReceiver.INTENT_DETACHED))
+	}
+	fun unregister(context: Context) {
+		context.unregisterReceiver(this)
 	}
 }

@@ -8,29 +8,19 @@ import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.os.Handler
 import android.os.Looper
-import android.support.v4.content.ContextCompat
 import android.util.Log
+import androidx.core.content.ContextCompat
 import me.hufman.androidautoidrive.carapp.maps.*
+import me.hufman.idriveconnectionkit.android.IDriveConnectionStatus
 import me.hufman.idriveconnectionkit.android.security.SecurityAccess
 
-class MapService(val context: Context, val securityAccess: SecurityAccess) {
+class MapService(val context: Context, val iDriveConnectionStatus: IDriveConnectionStatus, val securityAccess: SecurityAccess, val mapAppMode: MapAppMode) {
 	var threadGMaps: CarThread? = null
 	var mapApp: MapApp? = null
 	var mapScreenCapture: VirtualDisplayScreenCapture? = null
 	var virtualDisplay: VirtualDisplay? = null
 	var mapController: GMapsController? = null
 	var mapListener: MapsInteractionControllerListener? = null
-
-	companion object {
-		fun createVirtualDisplay(context: Context, imageCapture: ImageReader, dpi:Int = 100): VirtualDisplay {
-			val displayManager = context.getSystemService(DisplayManager::class.java)
-			return displayManager.createVirtualDisplay("IDriveGoogleMaps",
-					imageCapture.width, imageCapture.height, dpi,
-					imageCapture.surface, DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
-					null, Handler(Looper.getMainLooper()))
-		}
-
-	}
 
 	fun start(): Boolean {
 		if (AppSettings[AppSettings.KEYS.ENABLED_GMAPS].toBoolean() &&
@@ -40,22 +30,24 @@ class MapService(val context: Context, val securityAccess: SecurityAccess) {
 				if (threadGMaps == null) {
 					threadGMaps = CarThread("GMaps") {
 						Log.i(MainService.TAG, "Starting GMaps")
-						val mapScreenCapture = VirtualDisplayScreenCapture.build()
+						val mapScreenCapture = VirtualDisplayScreenCapture.build(mapAppMode.fullDimensions.visibleWidth, mapAppMode.fullDimensions.visibleHeight)
 						this.mapScreenCapture = mapScreenCapture
-						val virtualDisplay = createVirtualDisplay(context, mapScreenCapture.imageCapture, 100)
+						val virtualDisplay = VirtualDisplayScreenCapture.createVirtualDisplay(context, mapScreenCapture.imageCapture, 250)
 						this.virtualDisplay = virtualDisplay
-						val mapController = GMapsController(context, MapResultsSender(context), virtualDisplay)
+						val mapController = GMapsController(context, MapResultsSender(context), virtualDisplay, MutableAppSettingsReceiver(context, null /* specifically main thread */))
 						this.mapController = mapController
 						val mapListener = MapsInteractionControllerListener(context, mapController)
 						mapListener.onCreate()
 						this.mapListener = mapListener
 
-						mapApp = MapApp(securityAccess,
+						val mapApp = MapApp(iDriveConnectionStatus, securityAccess,
 								CarAppAssetManager(context, "smartthings"),
+								mapAppMode,
 								MapInteractionControllerIntent(context), mapScreenCapture)
+						this.mapApp = mapApp
 						val handler = threadGMaps?.handler
 						if (handler != null) {
-							mapApp?.onCreate(context, handler)
+							mapApp.onCreate(context, handler)
 						}
 					}
 					threadGMaps?.start()
@@ -72,20 +64,28 @@ class MapService(val context: Context, val securityAccess: SecurityAccess) {
 	}
 
 	fun stop() {
-		threadGMaps?.handler?.post {
-			mapApp?.onDestroy(context)
-			mapListener?.onDestroy()
-			mapScreenCapture?.onDestroy()
-			virtualDisplay?.release()
-			threadGMaps?.handler?.looper?.quitSafely()
+		mapScreenCapture?.onDestroy()
+		virtualDisplay?.release()
+		// nothing to stop in mapController
+		mapListener?.onDestroy()
+		mapApp?.onDestroy(context)
 
+		mapScreenCapture = null
+		virtualDisplay = null
+		mapController = null
+		mapListener = null
+
+		// if we caught it during initialization, kill it again
+		val thread = threadGMaps
+		if (thread?.isAlive == true) {
+			thread.post {
+				stop()
+				mapApp = null
+			}
+		} else {
 			mapApp = null
-			mapController = null
-			mapListener = null
-			mapScreenCapture = null
-			virtualDisplay = null
 		}
-
+		threadGMaps?.quitSafely()
 		threadGMaps = null
 	}
 }

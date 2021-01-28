@@ -2,14 +2,15 @@ package me.hufman.androidautoidrive.carapp.music.views
 
 import android.util.Log
 import de.bmw.idrive.BMWRemoting
-import me.hufman.androidautoidrive.GraphicsHelpers
+import me.hufman.androidautoidrive.utils.GraphicsHelpers
 import me.hufman.androidautoidrive.carapp.RHMIListAdapter
 import me.hufman.androidautoidrive.carapp.music.AVContextHandler
+import me.hufman.androidautoidrive.carapp.music.MusicImageIDs
 import me.hufman.androidautoidrive.music.MusicAppDiscovery
 import me.hufman.androidautoidrive.music.MusicAppInfo
 import me.hufman.idriveconnectionkit.rhmi.*
 
-class AppSwitcherView(val state: RHMIState, val appDiscovery: MusicAppDiscovery, val avContext: AVContextHandler, val graphicsHelpers: GraphicsHelpers) {
+class AppSwitcherView(val state: RHMIState, val appDiscovery: MusicAppDiscovery, val avContext: AVContextHandler, val graphicsHelpers: GraphicsHelpers, val musicImageIDs: MusicImageIDs) {
 
 	private val TAG = "MusicAppSwitcherView"
 	companion object {
@@ -23,11 +24,12 @@ class AppSwitcherView(val state: RHMIState, val appDiscovery: MusicAppDiscovery,
 	val appsEmptyList = RHMIModel.RaListModel.RHMIListConcrete(3).apply {
 		this.addRow(arrayOf("", "", L.MUSIC_APPLIST_EMPTY))
 	}
+	var visible = false
 	val apps = ArrayList<MusicAppInfo>()
 	val appsListAdapter = object: RHMIListAdapter<MusicAppInfo>(3, apps) {
 		override fun convertRow(index: Int, item: MusicAppInfo): Array<Any> {
 			val appIcon = graphicsHelpers.compress(item.icon, 48, 48)
-			val checkbox = BMWRemoting.RHMIResourceIdentifier(BMWRemoting.RHMIResourceType.IMAGEID, 149)
+			val checkbox = BMWRemoting.RHMIResourceIdentifier(BMWRemoting.RHMIResourceType.IMAGEID, musicImageIDs.CHECKMARK)
 			return arrayOf(
 				if (item == avContext.controller.currentAppInfo) checkbox else "",
 				BMWRemoting.RHMIResourceData(BMWRemoting.RHMIResourceType.IMAGEDATA, appIcon),
@@ -38,6 +40,13 @@ class AppSwitcherView(val state: RHMIState, val appDiscovery: MusicAppDiscovery,
 
 
 	fun initWidgets(playbackView: PlaybackView) {
+		state.focusCallback = FocusCallback { focused ->
+			visible = focused
+			if (focused) {
+				show()
+				appDiscovery.discoverAppsAsync()
+			}
+		}
 		state.getTextModel()?.asRaDataModel()?.value = L.MUSIC_APPLIST_TITLE
 		listApps.setVisible(true)
 		listApps.getAction()?.asHMIAction()?.getTargetModel()?.asRaIntModel()?.value = playbackView.state.id

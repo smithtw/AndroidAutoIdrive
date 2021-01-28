@@ -27,7 +27,6 @@ class MusicBrowser(val handler: Handler, val mediaBrowser: MediaBrowserCompat, v
 	init {
 		if (musicAppInfo.className == null) {
 			Log.i(TAG, "Skipping connection to ${musicAppInfo.name}, no className found")
-		} else {
 		}
 	}
 
@@ -45,11 +44,11 @@ class MusicBrowser(val handler: Handler, val mediaBrowser: MediaBrowserCompat, v
 					var mediaBrowser: MediaBrowserCompat? = null
 					val callback = object: MediaBrowserCompat.ConnectionCallback() {
 						override fun onConnected() {
-							val mediaBrowser = mediaBrowser
-							val sessionToken = mediaBrowser?.sessionToken
+							val curMediaBrowser = mediaBrowser
+							val sessionToken = curMediaBrowser?.sessionToken
 							Log.i(TAG, "Successful MediaBrowser connection to ${appInfo.name}")
-							if (mediaBrowser != null && sessionToken != null) {
-								pendingController.value = GenericMusicAppController(context, MediaControllerCompat(context, sessionToken), MusicBrowser(handler, mediaBrowser, appInfo))
+							if (curMediaBrowser != null && sessionToken != null) {
+								pendingController.value = GenericMusicAppController(context, MediaControllerCompat(context, sessionToken), MusicBrowser(handler, curMediaBrowser, appInfo))
 							} else {
 								pendingController.value = null
 							}
@@ -87,7 +86,26 @@ class MusicBrowser(val handler: Handler, val mediaBrowser: MediaBrowserCompat, v
 			"com.radio.fmradio" -> "__ROOT__"   // Radio FM
 			"app.sunshinelive.de.sunshinelive" -> "/"   // Sunshine Live
 			"com.google.android.apps.books" -> "com.google.android.apps.play.books.orson"  // Google Play Books
-			else -> mediaBrowser.root
+			"fm.libro.librofm" -> "/"   // Libro FM
+			"se.sr.android" -> "root"  // Sveriges Radio
+			"com.bambuna.podcastaddict" -> "__ROOT__"  // Podcast Addict
+			"com.neutroncode.mp" -> "root"    // Neutron
+			"com.neutroncode.mpeval" -> "root"    // Neutron (Eval)
+			"com.acast.nativeapp" -> "root"     // Acast Podcast Player
+			"com.podcastsapp" -> "__ROOT__"     // Audecibel
+			"com.audials" -> "root"         // Audials Radio
+			"com.audials.paid" -> "root"    // Audials Radio Pro
+			"grit.storytel.app" -> "/"      // Storytel
+			"com.france24.androidapp" -> "france_media_monde"       // France 24 playlists?
+			"com.rhapsody.napster" -> "ROOT"    // napster
+			"net.faz.FAZ" -> "media_root_id"    // Faz, but it returns an empty list anyways
+			"com.jio.media.jiobeats" -> "__ROOT__"      // JioSaavn
+			"com.gaana" -> "_parent_"   // Gaana
+			else -> return when(musicAppInfo.className) {   // some apps have a shared service library
+				"com.itmwpb.vanilla.radioapp.player.MusicService" -> "/"    // OneCMS (HOT97 Official)
+				"com.example.android.uamp.media.MusicService" -> "/"        // UAMP Example player (Radio Bob)
+				else -> mediaBrowser.root
+			}
 		}
 	}
 
@@ -102,24 +120,28 @@ class MusicBrowser(val handler: Handler, val mediaBrowser: MediaBrowserCompat, v
 		val deferred = CompletableDeferred<List<MediaBrowserCompat.MediaItem>>()
 		withContext(handler.asCoroutineDispatcher()) {
 			if (connected) {
-				val browsePath = path ?: getRoot()
+				val browsePath = (path ?: getRoot()).let {
+					// the browsePath (parentId) is not allowed to be blank
+					if (it.isEmpty()) { "/" } else it
+				}
+
 				var callback: MediaBrowserCompat.SubscriptionCallback? = null
 				callback = object : MediaBrowserCompat.SubscriptionCallback() {
 					override fun onError(parentId: String) {
 						mediaBrowser.unsubscribe(browsePath, callback!!)
-						deferred.complete(LinkedList())
+						deferred.complete(emptyList())
 					}
 
-					override fun onChildrenLoaded(parentId: String, children: MutableList<MediaBrowserCompat.MediaItem>) {
+					override fun onChildrenLoaded(parentId: String, children: MutableList<MediaBrowserCompat.MediaItem?>) {
 						mediaBrowser.unsubscribe(browsePath, callback!!)
-						deferred.complete(children)
+						deferred.complete(children.filterNotNull())
 					}
 
 					override fun onError(parentId: String, options: Bundle) {
 						onError(parentId)
 					}
 
-					override fun onChildrenLoaded(parentId: String, children: MutableList<MediaBrowserCompat.MediaItem>, options: Bundle) {
+					override fun onChildrenLoaded(parentId: String, children: MutableList<MediaBrowserCompat.MediaItem?>, options: Bundle) {
 						onChildrenLoaded(parentId, children)
 					}
 				}
@@ -156,8 +178,8 @@ class MusicBrowser(val handler: Handler, val mediaBrowser: MediaBrowserCompat, v
 						deferred.complete(null)
 					}
 
-					override fun onSearchResult(query: String, extras: Bundle?, items: MutableList<MediaBrowserCompat.MediaItem>) {
-						deferred.complete(items)
+					override fun onSearchResult(query: String, extras: Bundle?, items: MutableList<MediaBrowserCompat.MediaItem?>) {
+						deferred.complete(items.filterNotNull())
 					}
 				})
 			} else {

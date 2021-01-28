@@ -101,12 +101,11 @@ class GenericMusicAppController(val context: Context, val mediaController: Media
 	}
 
 	/* Current state */
-	override fun getQueue(): List<MusicMetadata> {
+	override fun getQueue(): QueueMetadata? {
 		triggerSpotifyWorkaround()
-
 		return remoteData {
-			mediaController.queue?.map { MusicMetadata.fromQueueItem(it) }
-		} ?: LinkedList()
+			QueueMetadata(mediaController.queueTitle?.toString(), null, mediaController.queue?.map { MusicMetadata.fromQueueItem(it) })
+		}
 	}
 
 	override fun getMetadata(): MusicMetadata? = remoteData {
@@ -118,15 +117,21 @@ class GenericMusicAppController(val context: Context, val mediaController: Media
 	override fun getPlaybackPosition(): PlaybackPosition {
 		val state = remoteData { mediaController.playbackState }
 		return if (state == null) {
-			PlaybackPosition(true, 0, 0, 0)
+			PlaybackPosition(true, false, 0, 0, 0)
 		} else {
 			val metadata = getMetadata()
 			val isPaused = (
+					state.state == PlaybackStateCompat.STATE_NONE ||
+					state.state == PlaybackStateCompat.STATE_STOPPED ||
 					state.state == PlaybackStateCompat.STATE_PAUSED ||
 					state.state == PlaybackStateCompat.STATE_CONNECTING ||
 					state.state == PlaybackStateCompat.STATE_BUFFERING
 					)
-			PlaybackPosition(isPaused, state.lastPositionUpdateTime, state.position, metadata?.duration ?: -1)
+			val isBuffering = (
+					state.state == PlaybackStateCompat.STATE_CONNECTING ||
+					state.state == PlaybackStateCompat.STATE_BUFFERING
+					)
+			PlaybackPosition(isPaused, isBuffering, state.lastPositionUpdateTime, state.position, metadata?.duration ?: -1)
 		}
 	}
 
@@ -141,6 +146,40 @@ class GenericMusicAppController(val context: Context, val mediaController: Media
 		return remoteData { mediaController.playbackState?.customActions }?.map {
 			CustomAction.fromMediaCustomAction(context, mediaController.packageName, it)
 		} ?: LinkedList()
+	}
+
+	override fun toggleShuffle() {
+		remoteCall {
+			mediaController.transportControls.setShuffleMode(if (isShuffling()) PlaybackStateCompat.SHUFFLE_MODE_NONE else PlaybackStateCompat.SHUFFLE_MODE_ALL)
+		}
+	}
+
+	override fun isShuffling(): Boolean {
+		return remoteData {
+			mediaController.shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_ALL || mediaController.shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_GROUP
+		} ?: false
+	}
+
+	override fun toggleRepeat() {
+		remoteCall {
+			mediaController.transportControls.setRepeatMode(
+					if (getRepeatMode() == RepeatMode.ALL)
+						PlaybackStateCompat.REPEAT_MODE_ONE
+					else if (getRepeatMode() == RepeatMode.ONE)
+						PlaybackStateCompat.REPEAT_MODE_NONE
+					else
+						PlaybackStateCompat.REPEAT_MODE_ALL
+			)
+		}
+	}
+
+	override fun getRepeatMode(): RepeatMode {
+		return when(mediaController.repeatMode) {
+			PlaybackStateCompat.REPEAT_MODE_ALL -> RepeatMode.ALL
+			PlaybackStateCompat.REPEAT_MODE_ONE -> RepeatMode.ONE
+			PlaybackStateCompat.REPEAT_MODE_NONE -> RepeatMode.OFF
+			else -> RepeatMode.OFF
+		}
 	}
 
 	/**

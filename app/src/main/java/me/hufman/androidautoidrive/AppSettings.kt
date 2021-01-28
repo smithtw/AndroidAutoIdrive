@@ -7,80 +7,153 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
+import androidx.lifecycle.MutableLiveData
+import java.lang.IllegalStateException
 
-const val INTENT_GMAP_RELOAD_SETTINGS = "me.hufman.androidautoidrive.carapp.gmaps.RELOAD_SETTINGS"
-
-object AppSettings {
-	private const val PREFERENCES_NAME = "AndroidAutoIdrive"
-
+/**
+ * This implements read-only access to a singleton of loaded settings
+ * This singleton will only return defaults until AppSettings.loadSettings(context) loads persisted settings
+ */
+interface AppSettings {
 	enum class KEYS(val key: String, val default: String, val comment: String) {
 		ENABLED_NOTIFICATIONS("Enabled_Notifications", "false", "Show phone notifications in the car"),
 		ENABLED_NOTIFICATIONS_POPUP("Enabled_Notifications_Popup", "true", "Show notification popups in the car"),
 		ENABLED_NOTIFICATIONS_POPUP_PASSENGER("Enabled_Notifications_Popup_Passenger", "false", "Show notification popups in the car when a passenger is seated"),
+		NOTIFICATIONS_SOUND("Notifications_Sound", "true", "Play a notification sound"),
+		NOTIFICATIONS_READOUT("Notifications_Readout", "false", "Viewing a notification also reads it aloud"),
+		NOTIFICATIONS_READOUT_POPUP("Notifications_Readout_Popup", "false", "New notifications are read aloud"),
+		NOTIFICATIONS_READOUT_POPUP_PASSENGER("Notifications_Readout_Popup_Passenger", "false", "New notifications are read aloud when a passenger is seated"),
 		ENABLED_GMAPS("Enabled_GMaps", "false", "Show Google Maps in the car"),
 		MAP_WIDESCREEN("Map_Widescreen", "false", "Show Map in widescreen"),
+		MAP_INVERT_SCROLL("Map_Invert_Scroll", "false", "Invert zoom direction"),
+		MAP_TRAFFIC("Map_Traffic", "true", "Show traffic"),
+		GMAPS_BUILDINGS("GMaps_Buildings", "true", "GMaps 3D Buildings"),
 		GMAPS_STYLE("GMaps_Style", "auto", "GMaps style"),
 		AUDIO_SUPPORTS_USB("Audio_Supports_USB", (Build.VERSION.SDK_INT < Build.VERSION_CODES.O).toString(), "The phone is old enough to support USB accessory audio"),
 		AUDIO_FORCE_CONTEXT("Audio_Force_Context", "false", "Force audio context"),
 		AUDIO_DESIRED_APP("Audio_Desired_App", "", "Last music app that was playing"),
 		SHOW_ADVANCED_SETTINGS("Advanced_Settings", "false", "Show advanced settings"),
 		HIDDEN_MUSIC_APPS("Hidden_Music_Apps", "com.android.bluetooth,com.clearchannel.iheartradio.connect,com.google.android.googlequicksearchbox,com.google.android.youtube,com.vanced.android.youtube", "List of music apps to hide from the app list"),
+		FORCE_SPOTIFY_LAYOUT("Force_Spotify_Layout", "false", "Use Spotify UI Resources"),
 		DONATION_DAYS_COUNT("Donation_Days_Count", "0", "Number of days that the user has used the app, counting towards the donation request threshold"),
 		DONATION_LAST_DAY("Donation_Last_Day", "2000-01-01", "The last day that the user used the app"),
+		SPOTIFY_CONTROL_SUCCESS("Spotify_Control_Success", "false", "Whether Spotify Control api worked previously"),
+		SPOTIFY_SHOW_UNAUTHENTICATED_NOTIFICATION("Spotify_Show_Unauthenticated_Notification", "false", "Show a notification when the Spotify Web API is not authenticated"),
+		SPOTIFY_AUTH_STATE_JSON("Spotify_Auth_State_Json", "", "String serialized JSON representation of the Spotify Web API AuthState."),
+		CACHED_CAR_CAPABILITIES("Cached_Car_Capabilities", "{}", "JSON Object of any previously-cached capabilities"),
+		CACHED_CAR_DATA("Cached_Car_Data", "{}", "JSON Object of any previously-cached cds properties"),
+		PREFER_CAR_LANGUAGE("Prefer_Car_Language", "true", "Prefer the car's language instead of the phone's language"),
+		FORCE_CAR_LANGUAGE("Force_Car_Language", "", "Force a specific language for the car apps")
 	}
 
-	private val loadedSettings = HashMap<KEYS, String>()
+	/** Store the active preferences in a singleton */
+	companion object {
+		private const val PREFERENCES_NAME = "AndroidAutoIdrive"
 
-	fun loadDefaultSettings() {
-		synchronized(loadedSettings) {
-			loadedSettings.clear()
-			KEYS.values().forEach { setting ->
-				loadedSettings[setting] = setting.default
+		private val loadedSettings = HashMap<KEYS, String>()
+
+		/**
+		 * Initialize the current settings with defaults
+		 * which will undo any loadSettings that may have happened
+		 */
+		fun loadDefaultSettings() {
+			synchronized(loadedSettings) {
+				loadedSettings.clear()
+				KEYS.values().forEach { setting ->
+					loadedSettings[setting] = setting.default
+				}
 			}
 		}
-	}
 
-	fun loadSettings(ctx: Context) {
-		val preferences = ctx.getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
-		synchronized(loadedSettings) {
-			loadedSettings.clear()
-			KEYS.values().forEach { setting ->
-				val value = preferences.getString(setting.key, setting.default) ?: setting.default
-				loadedSettings[setting] = value
+		fun loadSettings(ctx: Context) {
+			val preferences = ctx.getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+			synchronized(loadedSettings) {
+				loadedSettings.clear()
+				KEYS.values().forEach { setting ->
+					val value = preferences.getString(setting.key, setting.default) ?: setting.default
+					loadedSettings[setting] = value
+				}
 			}
 		}
-	}
 
-	fun tempSetSetting(key: KEYS, value: String) {
-		synchronized(loadedSettings) {
+		operator fun get(key: KEYS): String {
+			return getSetting(key)
+		}
+		private fun getSetting(key: KEYS): String {
+			synchronized(loadedSettings) {
+				return loadedSettings[key] ?: key.default
+			}
+		}
+
+		fun tempSetSetting(key: KEYS, value: String) {
+			synchronized(loadedSettings) {
+				loadedSettings[key] = value
+			}
+		}
+		fun saveSetting(ctx: Context, key: KEYS, value: String) {
+			val preferences = ctx.getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+			val editor = preferences.edit()
+			editor.putString(key.key, value)
+			editor.apply()
 			loadedSettings[key] = value
 		}
 	}
-	operator fun get(key: KEYS): String {
-		return getSetting(key)
-	}
-	fun getSetting(key: KEYS): String {
-		synchronized(loadedSettings) {
-			return loadedSettings[key] ?: key.default
-		}
-	}
 
-	fun saveSetting(ctx: Context, key: KEYS, value: String) {
-		val preferences = ctx.getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
-		val editor = preferences.edit()
-		editor.putString(key.key, value)
-		editor.apply()
-		loadedSettings[key] = value
+	/** Convenience function for getting a setting */
+	operator fun get(key: KEYS): String
+}
+
+/** A concrete class to read settings from the AppSettings singleton */
+class AppSettingsViewer: AppSettings {
+	override operator fun get(key: AppSettings.KEYS): String {
+		return AppSettings[key]
 	}
 }
 
 /**
- * An instantiated object to pass around to get/change settings
- * It can also have a callback registered
+ * An interface for modifying the settings
  */
-class MutableAppSettings(val context: Context, val handler: Handler? = null) {
+interface MutableAppSettings: AppSettings {
+	operator fun set(key: AppSettings.KEYS, value: String)
+}
+
+/**
+ * An interface for being notified on changes to the settings
+ */
+interface AppSettingsObserver: AppSettings {
+	var callback: (() -> Unit)?
+}
+
+/**
+ * A combined interface for modifying the settings and being notified on changes
+ */
+interface MutableAppSettingsObserver: AppSettingsObserver, MutableAppSettings {
+}
+
+/**
+ * An isolated MutableAppSettings object, unrelated to the AppSettings singleton settings
+ * By default it returns all the default settings values
+ */
+class MockAppSettings(vararg settings: Pair<AppSettings.KEYS, String> = emptyArray()): MutableAppSettingsObserver {
+	override var callback: (() -> Unit)? = null
+	val settings = mutableMapOf(*settings)
+	override operator fun get(key: AppSettings.KEYS): String {
+		return settings[key] ?: key.default
+	}
+	override operator fun set(key: AppSettings.KEYS, value: String) {
+		settings[key] = value
+		callback?.invoke()
+	}
+}
+
+/**
+ * A MutableAppSettings object that modifies the global singleton and notifies other instances
+ * Clients should set a callback to subscribe, and they should set it to null to unsubscribe to avoid leaking
+ * Clients can specify a custom handler on which to receive the callback
+ */
+class MutableAppSettingsReceiver(val context: Context, val handler: Handler? = null): MutableAppSettingsObserver {
 	companion object {
-		val INTENT_SETTINGS_CHANGED = "me.hufman.androidautoidrive.notifications.INTENT_SETTINGS_CHANGED"
+		val INTENT_SETTINGS_CHANGED = "me.hufman.androidautoidrive.INTENT_SETTINGS_CHANGED"
 	}
 
 	val receiver = object: BroadcastReceiver() {
@@ -88,7 +161,7 @@ class MutableAppSettings(val context: Context, val handler: Handler? = null) {
 			callback?.invoke()
 		}
 	}
-	var callback: (() -> Unit)? = null
+	override var callback: (() -> Unit)? = null
 		set(value) {
 			if (field == null && value != null) {
 				context.registerReceiver(receiver, IntentFilter(INTENT_SETTINGS_CHANGED), null, handler)
@@ -99,21 +172,92 @@ class MutableAppSettings(val context: Context, val handler: Handler? = null) {
 			field = value
 		}
 
-	fun getSetting(key: AppSettings.KEYS): String {
-		return AppSettings.getSetting(key)
-	}
-	fun saveSetting(key: AppSettings.KEYS, value: String) {
-		AppSettings.saveSetting(context, key, value)
-
-		context.sendBroadcast(Intent(INTENT_SETTINGS_CHANGED))
+	override operator fun get(key: AppSettings.KEYS): String {
+		return AppSettings[key]
 	}
 
-	operator fun get(key: AppSettings.KEYS): String {
-		return this.getSetting(key)
+	override operator fun set(key: AppSettings.KEYS, value: String) {
+		val oldValue = this[key]
+		if (oldValue != value) {
+			AppSettings.saveSetting(context, key, value)
+			context.sendBroadcast(Intent(INTENT_SETTINGS_CHANGED))
+		}
 	}
-	operator fun set(key: AppSettings.KEYS, value: String) {
-		this.saveSetting(key, value)
+}
+
+abstract class LiveSetting<K>(val context: Context, val key: AppSettings.KEYS): MutableLiveData<K>() {
+	val appSettings = MutableAppSettingsReceiver(context, null /* specifically the main thread */)
+	init {
+		try {
+			super.setValue(getData())
+		} catch (e: IllegalStateException) {
+			super.postValue(getData())
+		}
 	}
+
+	// backing data access
+	abstract fun serialize(value: K): String
+	abstract fun deserialize(value: String): K
+
+	private fun getData(): K {
+		return deserialize(appSettings[key])
+	}
+	private fun setData(value: K) {
+		val newValue = serialize(value)
+		if (appSettings[key] != newValue) {
+			appSettings[key] = newValue
+		}
+	}
+
+	// LiveData interface
+	// set the LiveData internal data, to update any observers,
+	// and then trigger any other AppSettings listeners
+	// getValue just returns the internal data
+	override fun getValue(): K? {
+		val backing = getData()
+		if (backing != super.getValue()) {
+			super.setValue(backing)
+		}
+		return backing
+	}
+
+	override fun setValue(value: K) {
+		super.setValue(value)
+		setData(value)
+	}
+
+	override fun postValue(value: K) {
+		super.postValue(value)
+		setData(value)
+	}
+
+	override fun onActive() {
+		super.onActive()
+
+		// subscribe to AppSettings changes from other setters
+		// trigger any LiveData observers when the underlying data changes
+		appSettings.callback = {
+			setValue(getData())
+		}
+
+		// refresh the current LiveData state from the current data
+		setValue(getData())
+	}
+
+	override fun onInactive() {
+		super.onInactive()
+		// unsubscribe the callback
+		appSettings.callback = null
+	}
+}
+
+class StringLiveSetting(context: Context, key: AppSettings.KEYS): LiveSetting<String>(context, key) {
+	override fun serialize(value: String) = value
+	override fun deserialize(value: String) = value
+}
+class BooleanLiveSetting(context: Context, key: AppSettings.KEYS): LiveSetting<Boolean>(context, key) {
+	override fun serialize(value: Boolean) = value.toString()
+	override fun deserialize(value: String) = value.toBoolean()
 }
 
 /**

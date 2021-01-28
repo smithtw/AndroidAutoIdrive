@@ -6,13 +6,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 import android.os.Build
-import android.support.v4.app.NotificationCompat
-import android.support.v4.app.NotificationManagerCompat
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import me.hufman.androidautoidrive.ApplicationCallbacks
 import me.hufman.androidautoidrive.PhoneAppResources
 import me.hufman.androidautoidrive.R
-import me.hufman.androidautoidrive.Utils
+import me.hufman.androidautoidrive.utils.Utils
 
 open class AssistantControllerAndroid(val context: Context, val phoneAppResources: PhoneAppResources): AssistantController {
 	companion object {
@@ -20,7 +20,6 @@ open class AssistantControllerAndroid(val context: Context, val phoneAppResource
 
 		val NOTIFICATION_ID = 20506
 		val NOTIFICATION_CHANNEL_ID = "AssistantLauncher"
-		val NOTIFICATION_CHANNEL_NAME = "Assistant Launcher"
 
 		fun getVoiceIntent(): Intent {
 			return Intent(Intent.ACTION_VOICE_COMMAND)
@@ -34,7 +33,7 @@ open class AssistantControllerAndroid(val context: Context, val phoneAppResource
 	private fun createNotificationChannel() {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 			val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID,
-					NOTIFICATION_CHANNEL_NAME,
+					context.getString(R.string.notification_channel_assistant),
 					NotificationManager.IMPORTANCE_HIGH)
 			channel.setSound(null, null)
 
